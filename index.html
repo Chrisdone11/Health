@@ -888,6 +888,69 @@
     };
 
     // ============================================================================
+    // 앱 스타일 alert/confirm 대체 시스템 (브라우저 기본 팝업 대신 앱 디자인에 맞는 팝업)
+    // window.appAlert(message) / window.appConfirm(message) 이 Promise를 반환하며,
+    // App 컴포넌트가 마운트될 때 실제 다이얼로그 상태와 연결됨
+    // ============================================================================
+    let _dialogResolver = null;
+    let _setDialogState = null;
+
+    window.appAlert = (message) => {
+      return new Promise((resolve) => {
+        _dialogResolver = () => resolve(true);
+        if (_setDialogState) _setDialogState({ type: 'alert', message });
+      });
+    };
+
+    window.appConfirm = (message) => {
+      return new Promise((resolve) => {
+        _dialogResolver = (result) => resolve(result);
+        if (_setDialogState) _setDialogState({ type: 'confirm', message });
+      });
+    };
+
+    function AppDialogModal({ dialogState, onClose }) {
+      if (!dialogState) return null;
+      const { type, message } = dialogState;
+      const isDanger = message.includes('삭제');
+
+      const handleResult = (result) => {
+        if (_dialogResolver) _dialogResolver(result);
+        _dialogResolver = null;
+        onClose();
+      };
+
+      return (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-6 z-[100]">
+          <div className="bg-[#242424] border border-gray-700 rounded-2xl w-full max-w-xs shadow-2xl overflow-hidden">
+            <div className="p-5 flex flex-col items-center text-center space-y-3">
+              <div className={`w-11 h-11 rounded-full flex items-center justify-center ${isDanger ? 'bg-red-500/15' : 'bg-blue-500/15'}`}>
+                <Icon name={isDanger ? 'trash-2' : 'info'} className={`w-5 h-5 ${isDanger ? 'text-red-400' : 'text-blue-400'}`} />
+              </div>
+              <p className="text-sm text-gray-100 leading-relaxed whitespace-pre-line">{message}</p>
+            </div>
+            <div className="flex border-t border-gray-700">
+              {type === 'confirm' && (
+                <button
+                  onClick={() => handleResult(false)}
+                  className="flex-1 py-3.5 text-sm font-semibold text-gray-400 hover:bg-white/5 border-r border-gray-700"
+                >
+                  취소
+                </button>
+              )}
+              <button
+                onClick={() => handleResult(true)}
+                className={`flex-1 py-3.5 text-sm font-bold hover:bg-white/5 ${isDanger ? 'text-red-400' : 'text-blue-400'}`}
+              >
+                확인
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ============================================================================
     // 메인 App 컴포넌트
     // ============================================================================
     function App() {
@@ -997,6 +1060,13 @@
 
       // 날짜 롱탭 복사/이동/삭제 모달 상태
       const [dateActionState, setDateActionState] = useState(null); // { fromDate, toDate } - 드래그로 날짜에 드롭 후 이동/복사 선택 팝업
+
+      // 앱 스타일 alert/confirm 팝업 상태 (window.appAlert/appConfirm과 연결)
+      const [dialogState, setDialogState] = useState(null);
+      useEffect(() => {
+        _setDialogState = setDialogState;
+        return () => { _setDialogState = null; };
+      }, []);
 
       // 안드로이드 뒤로가기 버튼 → 이전 단계 이동 (앱 종료 방지)
       useEffect(() => {
@@ -1135,7 +1205,7 @@
         const currentSets = updatedExercises[exIdx].sets;
 
         if (currentSets.length <= 1) {
-          alert("최소 1개 이상의 세트가 유지되어야 합니다.");
+          window.appAlert("최소 1개 이상의 세트가 유지되어야 합니다.");
           return;
         }
 
@@ -1293,7 +1363,7 @@
       const handleDeleteExerciseFromSession = (exerciseId) => {
         if (!activeSession) return;
         if (activeSession.exercises.length <= 1) {
-          alert('최소 1개 이상의 운동이 유지되어야 합니다.');
+          window.appAlert('최소 1개 이상의 운동이 유지되어야 합니다.');
           return null;
         }
         const newExercises = activeSession.exercises.filter(e => e.id !== exerciseId);
@@ -1505,6 +1575,9 @@
               onClose={() => setExerciseInfoTarget(null)}
             />
           )}
+
+          {/* 앱 스타일 alert/confirm 팝업 (브라우저 기본 팝업 대체) */}
+          <AppDialogModal dialogState={dialogState} onClose={() => setDialogState(null)} />
         </div>
       );
     }
@@ -1573,13 +1646,13 @@
         }
       };
 
-      const handleDayPressEnd = () => {
+      const handleDayPressEnd = async () => {
         if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
 
         if (draggingDateRef.current) {
           const fromDate = draggingDateRef.current;
           if (isOverDeleteZoneRef.current) {
-            if (confirm(`${fromDate} 기록을 삭제할까요?`)) {
+            if (await window.appConfirm(`${fromDate} 기록을 삭제할까요?`)) {
               onDeleteDateLog(fromDate);
             }
           } else if (dragOverDateRef.current && dragOverDateRef.current !== fromDate) {
@@ -2188,7 +2261,7 @@
                           불러오기
                         </button>
                         <button
-                          onClick={() => { if (confirm(`'${r.name}' 루틴을 삭제할까요?`)) onDeleteRoutine(r.id); }}
+                          onClick={async () => { if (await window.appConfirm(`'${r.name}' 루틴을 삭제할까요?`)) onDeleteRoutine(r.id); }}
                           className="p-1.5 text-gray-500 hover:text-red-400"
                         >
                           <Icon name="trash-2" className="w-4 h-4" />
@@ -2415,8 +2488,8 @@
       const [activeSheet, setActiveSheet] = useState(null); // 'part' | 'equipment' | 'type' | null
 
       const handleCreate = () => {
-        if (!name.trim()) { alert('운동 이름을 입력해주세요.'); return; }
-        if (!selectedPart) { alert('운동 부위를 선택해주세요.'); return; }
+        if (!name.trim()) { window.appAlert('운동 이름을 입력해주세요.'); return; }
+        if (!selectedPart) { window.appAlert('운동 부위를 선택해주세요.'); return; }
 
         // '스쿼트: 바벨' 형식이면 콜론 앞부분을 상위 카테고리로 사용
         const category = name.includes(':') ? name.split(':')[0].trim() : name.trim();
@@ -3255,9 +3328,9 @@
 
                     {/* 원버튼 삭제 (휴지통) - 완료된 세트만 삭제 전 확인 팝업, 미완료 세트는 바로 삭제 */}
                     <button 
-                      onClick={() => {
+                      onClick={async () => {
                         if (set.completed) {
-                          if (confirm(`${set.setNum}세트를 삭제할까요?`)) {
+                          if (await window.appConfirm(`${set.setNum}세트를 삭제할까요?`)) {
                             handleDeleteSet(currentExIndex, setIdx);
                           }
                         } else {
@@ -3302,36 +3375,36 @@
               style={{ width: `${timerProgress}%` }}
             />
 
-            <div className="relative z-10 p-3">
+            <div className="relative z-10 px-3 py-1.5">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2">
-                <Icon name="clock" className={`w-5 h-5 ${timerActive ? 'text-blue-400 animate-pulse' : 'text-gray-500'}`} />
+                <Icon name="clock" className={`w-4 h-4 ${timerActive ? 'text-blue-400 animate-pulse' : 'text-gray-500'}`} />
                 <div>
-                  <div className="text-[10px] text-gray-400">휴식 타이머</div>
-                  <div className="text-lg font-bold font-mono text-white leading-none">
-                    {formatTime(timerRemaining)} <span className="text-xs text-gray-500">/ {formatTime(timerTotal)}</span>
+                  <div className="text-[9px] text-gray-400 leading-none">휴식 타이머</div>
+                  <div className="text-base font-bold font-mono text-white leading-tight">
+                    {formatTime(timerRemaining)} <span className="text-[10px] text-gray-500">/ {formatTime(timerTotal)}</span>
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center space-x-1.5">
+              <div className="flex items-center space-x-1">
                 <button 
                   onClick={() => setIsMuted(!isMuted)}
-                  className="p-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-300"
+                  className="p-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-300"
                 >
-                  <Icon name={isMuted ? "volume-x" : "volume-2"} className={`w-4 h-4 ${isMuted ? 'text-red-400' : 'text-blue-400'}`} />
+                  <Icon name={isMuted ? "volume-x" : "volume-2"} className={`w-3.5 h-3.5 ${isMuted ? 'text-red-400' : 'text-blue-400'}`} />
                 </button>
 
                 {/* 진동 테스트 버튼 - 항상 결과를 알림으로 보여줘서 정확한 원인 진단 */}
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     const supported = !!navigator.vibrate;
                     let result = null;
                     if (supported) {
                       result = navigator.vibrate([300, 150, 300]);
                     }
                     const resultText = !supported ? '지원 안 함' : (result ? '성공(API는 정상 호출됨)' : '거부됨');
-                    alert(
+                    await window.appAlert(
                       `[진동 진단 결과]\n` +
                       `API 지원 여부: ${supported ? '예' : '아니오'}\n` +
                       `호출 결과: ${resultText}\n` +
@@ -3339,22 +3412,22 @@
                       `※ '성공'인데도 실제 진동이 안 느껴진다면, 브라우저는 요청을 받아들였지만 기기(OS)가 실제 진동을 막고 있는 경우입니다. 무음모드/진동 설정을 확인해주세요.`
                     );
                   }}
-                  className="p-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-300"
+                  className="p-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-300"
                   title="진동 테스트"
                 >
-                  <Icon name="zap" className="w-4 h-4 text-yellow-400" />
+                  <Icon name="zap" className="w-3.5 h-3.5 text-yellow-400" />
                 </button>
 
                 <button 
                   onClick={() => addTimerSeconds(-30)}
-                  className="px-2.5 py-2 bg-gray-800 hover:bg-gray-700 text-xs font-bold text-red-400 rounded-lg active:scale-95 transition-transform"
+                  className="px-2 py-1.5 bg-gray-800 hover:bg-gray-700 text-xs font-bold text-red-400 rounded-lg active:scale-95 transition-transform"
                 >
                   -30s
                 </button>
 
                 <button 
                   onClick={() => addTimerSeconds(30)}
-                  className="px-2.5 py-2 bg-gray-800 hover:bg-gray-700 text-xs font-bold text-blue-400 rounded-lg active:scale-95 transition-transform"
+                  className="px-2 py-1.5 bg-gray-800 hover:bg-gray-700 text-xs font-bold text-blue-400 rounded-lg active:scale-95 transition-transform"
                 >
                   +30s
                 </button>
@@ -3374,7 +3447,7 @@
                       startTimer(60);
                     }
                   }}
-                  className="w-16 h-9 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-lg flex items-center justify-center space-x-1 shadow-md active:scale-95 transition-transform"
+                  className="w-14 h-8 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-lg flex items-center justify-center space-x-1 shadow-md active:scale-95 transition-transform"
                 >
                   <Icon name={timerActive ? "pause" : "play"} className="w-3.5 h-3.5" />
                   <span>{timerActive ? '정지' : '시작'}</span>
@@ -3442,12 +3515,12 @@
         onReorder(newOrder);
       };
 
-      const handleDeleteClick = (id) => {
+      const handleDeleteClick = async (id) => {
         if (order.length <= 1) {
-          alert('최소 1개 이상의 운동이 유지되어야 합니다.');
+          window.appAlert('최소 1개 이상의 운동이 유지되어야 합니다.');
           return;
         }
-        if (!confirm('이 운동을 목록에서 삭제할까요?')) return;
+        if (!(await window.appConfirm('이 운동을 목록에서 삭제할까요?'))) return;
         setOrder(order.filter(e => e.id !== id));
         onDeleteExercise(id);
       };
@@ -3753,8 +3826,8 @@
                       <div className="text-[11px] text-gray-400 mt-0.5 truncate">{r.partSummary} • {r.exercises.length}개 운동</div>
                     </div>
                     <button
-                      onClick={() => {
-                        if (confirm(`'${r.name}' 루틴을 현재 운동 조합으로 덮어쓸까요?`)) {
+                      onClick={async () => {
+                        if (await window.appConfirm(`'${r.name}' 루틴을 현재 운동 조합으로 덮어쓸까요?`)) {
                           onOverwrite(r.id, exercises);
                         }
                       }}
