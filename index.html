@@ -879,11 +879,17 @@
       }
     };
 
+    let _storageWarningShown = false;
     const saveStorage = (key, value) => {
       try {
         localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(value));
       } catch (e) {
         console.error('localStorage 저장 실패:', key, e);
+        // 저장 실패는 곧 데이터 유실을 의미하므로, 세션당 한 번은 사용자에게 반드시 알림
+        if (!_storageWarningShown && window.appAlert) {
+          _storageWarningShown = true;
+          window.appAlert('저장 공간이 부족하거나 오류가 발생해 최근 변경사항이 저장되지 않았습니다.\n브라우저 저장공간을 확인해주세요.');
+        }
       }
     };
 
@@ -1021,13 +1027,22 @@
           name,
           partSummary: partNames.join(', '),
           color,
-          exercises: exercises.map(ex => ({ id: ex.id, partId: ex.partId, name: ex.name, category: ex.category, equipment: ex.equipment })),
+          // 세트 수 + 무게/횟수/휴식시간까지 함께 저장 (다음에 루틴을 불러오면 그대로 복원됨)
+          exercises: exercises.map(ex => ({
+            id: ex.id,
+            partId: ex.partId,
+            name: ex.name,
+            category: ex.category,
+            equipment: ex.equipment,
+            isBodyweight: ex.isBodyweight,
+            sets: (ex.sets || []).map(s => ({ weight: s.weight, reps: s.reps, restSeconds: s.restSeconds }))
+          })),
           createdAt: new Date().toISOString().slice(0, 10)
         };
         setRoutines(prev => [newRoutine, ...prev]);
       };
 
-      // 기존에 저장된 루틴을 현재 운동 조합으로 덮어쓰기
+      // 기존에 저장된 루틴을 현재 운동 조합(세트 수 + 무게/횟수 포함)으로 덮어쓰기
       const handleOverwriteRoutine = (routineId, exercises) => {
         if (!routineId || exercises.length === 0) return;
         const partNames = [...new Set(exercises.map(ex => {
@@ -1037,7 +1052,15 @@
         setRoutines(prev => prev.map(r => r.id === routineId ? {
           ...r,
           partSummary: partNames.join(', '),
-          exercises: exercises.map(ex => ({ id: ex.id, partId: ex.partId, name: ex.name, category: ex.category, equipment: ex.equipment })),
+          exercises: exercises.map(ex => ({
+            id: ex.id,
+            partId: ex.partId,
+            name: ex.name,
+            category: ex.category,
+            equipment: ex.equipment,
+            isBodyweight: ex.isBodyweight,
+            sets: (ex.sets || []).map(s => ({ weight: s.weight, reps: s.reps, restSeconds: s.restSeconds }))
+          })),
           updatedAt: new Date().toISOString().slice(0, 10)
         } : r));
       };
@@ -1255,22 +1278,36 @@
       };
 
       // 운동 목록 → 세션용 포맷 변환 (공통 헬퍼)
-      const formatExercisesForSession = (list) => list.map(ex => ({
-        id: ex.id,
-        partId: ex.partId,
-        name: ex.name,
-        // 기구가 '맨몸'인 운동은 기본적으로 맨몸(횟수 카운팅) 모드로 시작 (운동화면에서 언제든 토글 가능)
-        isBodyweight: !!(ex.equipment && ex.equipment.includes('맨몸')),
-        prWeight: 90,
-        prReps: 8,
-        pr1RM: 112.2,
-        sets: [
-          { setNum: 1, weight: 70, reps: 15, restSeconds: 60, completed: false },
-          { setNum: 2, weight: 75, reps: 15, restSeconds: 60, completed: false },
-          { setNum: 3, weight: 80, reps: 12, restSeconds: 60, completed: false },
-          { setNum: 4, weight: 85, reps: 9, restSeconds: 60, completed: false },
-        ]
-      }));
+      // 운동 목록 → 세션용 세트 데이터 생성. 루틴에 저장된 세트(무게/횟수/휴식)가 있으면 그걸 그대로 불러오고,
+      // 새로 고른 운동(세트 정보 없음)이면 기본 템플릿을 사용
+      const formatExercisesForSession = (list) => list.map(ex => {
+        const hasSavedSets = Array.isArray(ex.sets) && ex.sets.length > 0;
+        const baseSets = hasSavedSets
+          ? ex.sets.map((s, i) => ({
+              setNum: i + 1,
+              weight: s.weight,
+              reps: s.reps,
+              restSeconds: s.restSeconds || 60,
+              completed: false
+            }))
+          : [
+              { setNum: 1, weight: 70, reps: 15, restSeconds: 60, completed: false },
+              { setNum: 2, weight: 75, reps: 15, restSeconds: 60, completed: false },
+              { setNum: 3, weight: 80, reps: 12, restSeconds: 60, completed: false },
+              { setNum: 4, weight: 85, reps: 9, restSeconds: 60, completed: false },
+            ];
+        return {
+          id: ex.id,
+          partId: ex.partId,
+          name: ex.name,
+          // 기구가 '맨몸'인 운동은 기본적으로 맨몸(횟수 카운팅) 모드로 시작 (운동화면에서 언제든 토글 가능)
+          isBodyweight: ex.isBodyweight !== undefined ? ex.isBodyweight : !!(ex.equipment && ex.equipment.includes('맨몸')),
+          prWeight: 90,
+          prReps: 8,
+          pr1RM: 112.2,
+          sets: baseSets
+        };
+      });
 
       // 대기열 운동으로 세션 시작
       const handleStartWorkoutWithStaged = () => {
@@ -2195,8 +2232,17 @@
 
       const handleLoadRoutine = (routine) => {
         const toAdd = routine.exercises.filter(rEx => !stagedExercises.some(s => s.id === rEx.id));
-        const fullFromDb = toAdd.map(rEx => exerciseDb.find(e => e.id === rEx.id) || rEx);
-        setStagedExercises([...stagedExercises, ...fullFromDb]);
+        // DB의 표시정보(카테고리/기구/아이콘)는 최신 것을 쓰되, 루틴에 저장된 세트(무게/횟수/휴식)는 그대로 유지
+        const merged = toAdd.map(rEx => {
+          const dbEntry = exerciseDb.find(e => e.id === rEx.id);
+          if (!dbEntry) return rEx;
+          return {
+            ...dbEntry,
+            sets: rEx.sets,
+            isBodyweight: rEx.isBodyweight !== undefined ? rEx.isBodyweight : dbEntry.isBodyweight
+          };
+        });
+        setStagedExercises([...stagedExercises, ...merged]);
       };
 
       return (
@@ -2713,6 +2759,12 @@
       const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
       const [isLoadSetsModalOpen, setIsLoadSetsModalOpen] = useState(false);
 
+      // 운동을 스와이프로 전환하면 이전 운동의 입력창 편집 상태가 새 운동에 잘못 걸리지 않도록 초기화
+      // (값 자체는 onChange마다 바로 저장되므로 데이터 유실 없이 편집 UI만 정리됨)
+      useEffect(() => {
+        setEditingField(null);
+      }, [currentExIndex]);
+
       // 무게 단위(kg/lb) 표시·입력 변환 (저장은 항상 kg)
       const weightToDisplay = (kg) => (weightUnit === 'kg' ? kg : kgToLb(kg));
       const weightInputToKg = (val) => {
@@ -3213,13 +3265,14 @@
                           inputMode="numeric"
                           autoFocus
                           value={editingValue}
-                          onChange={(e) => setEditingValue(e.target.value)}
-                          onFocus={handleInputFocusScroll}
-                          onBlur={() => {
-                            const secs = parseRestInput(editingValue);
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setEditingValue(val);
+                            const secs = parseRestInput(val);
                             if (secs !== null) handleSetFieldDirect(currentExIndex, setIdx, 'restSeconds', secs);
-                            setEditingField(null);
                           }}
+                          onFocus={handleInputFocusScroll}
+                          onBlur={() => setEditingField(null)}
                           onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
                           className="w-14 bg-[#121212] border border-blue-500 rounded text-center text-xs font-bold text-white font-mono py-0.5"
                         />
@@ -3243,13 +3296,14 @@
                             type="number"
                             autoFocus
                             value={editingValue}
-                            onChange={(e) => setEditingValue(e.target.value)}
-                            onFocus={handleInputFocusScroll}
-                            onBlur={() => {
-                              const kgValue = weightInputToKg(editingValue);
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setEditingValue(val);
+                              const kgValue = weightInputToKg(val);
                               if (kgValue !== null) handleSetFieldDirect(currentExIndex, setIdx, 'weight', kgValue);
-                              setEditingField(null);
                             }}
+                            onFocus={handleInputFocusScroll}
+                            onBlur={() => setEditingField(null)}
                             onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
                             className="w-12 bg-[#121212] border border-blue-500 rounded text-center text-sm font-bold text-white font-mono py-0.5"
                           />
@@ -3272,9 +3326,13 @@
                           type="number"
                           autoFocus
                           value={editingValue}
-                          onChange={(e) => setEditingValue(e.target.value)}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setEditingValue(val);
+                            handleSetFieldDirect(currentExIndex, setIdx, 'reps', val);
+                          }}
                           onFocus={handleInputFocusScroll}
-                          onBlur={() => { handleSetFieldDirect(currentExIndex, setIdx, 'reps', editingValue); setEditingField(null); }}
+                          onBlur={() => setEditingField(null)}
                           onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
                           className="w-10 bg-[#121212] border border-blue-500 rounded text-center text-sm font-bold text-white font-mono py-0.5"
                         />
