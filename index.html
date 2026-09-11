@@ -1180,12 +1180,13 @@
 
       const handleToggleSetComplete = (exIdx, setIdx) => {
         if (!activeSession) return;
-        const updatedExercises = [...activeSession.exercises];
-        const targetSet = updatedExercises[exIdx].sets[setIdx];
+        const targetExercise = activeSession.exercises[exIdx];
+        const targetSet = targetExercise.sets[setIdx];
         const willBeCompleted = !targetSet.completed;
-        const isLastSetOfExercise = setIdx === updatedExercises[exIdx].sets.length - 1;
+        const isLastSetOfExercise = setIdx === targetExercise.sets.length - 1;
 
-        targetSet.completed = willBeCompleted;
+        const newSets = targetExercise.sets.map((s, i) => i === setIdx ? { ...s, completed: willBeCompleted } : s);
+        const updatedExercises = activeSession.exercises.map((ex, i) => i === exIdx ? { ...ex, sets: newSets } : ex);
         setActiveSession({ ...activeSession, exercises: updatedExercises });
 
         if (willBeCompleted) {
@@ -1202,44 +1203,52 @@
 
       const handleUpdateSetField = (exIdx, setIdx, field, delta) => {
         if (!activeSession) return;
-        const updatedExercises = [...activeSession.exercises];
-        const targetSet = updatedExercises[exIdx].sets[setIdx];
+        const targetExercise = activeSession.exercises[exIdx];
+        const targetSet = targetExercise.sets[setIdx];
+        const newSet = { ...targetSet };
 
-        if (field === 'weight') targetSet.weight = Math.max(0, targetSet.weight + delta);
-        if (field === 'reps') targetSet.reps = Math.max(1, targetSet.reps + delta);
-        if (field === 'restSeconds') targetSet.restSeconds = Math.max(10, targetSet.restSeconds + delta);
+        if (field === 'weight') newSet.weight = Math.max(0, targetSet.weight + delta);
+        if (field === 'reps') newSet.reps = Math.max(1, targetSet.reps + delta);
+        if (field === 'restSeconds') newSet.restSeconds = Math.max(10, targetSet.restSeconds + delta);
 
+        const newSets = targetExercise.sets.map((s, i) => i === setIdx ? newSet : s);
+        const updatedExercises = activeSession.exercises.map((ex, i) => i === exIdx ? { ...ex, sets: newSets } : ex);
         setActiveSession({ ...activeSession, exercises: updatedExercises });
       };
 
       // 무게/횟수 직접 입력 (절대값 지정)
       const handleSetFieldDirect = (exIdx, setIdx, field, value) => {
         if (!activeSession) return;
-        const updatedExercises = [...activeSession.exercises];
-        const targetSet = updatedExercises[exIdx].sets[setIdx];
         const num = Number(value);
         if (Number.isNaN(num)) return;
 
-        if (field === 'weight') targetSet.weight = Math.max(0, num);
-        if (field === 'reps') targetSet.reps = Math.max(0, Math.round(num));
-        if (field === 'restSeconds') targetSet.restSeconds = Math.max(0, Math.round(num));
+        const targetExercise = activeSession.exercises[exIdx];
+        const targetSet = targetExercise.sets[setIdx];
+        const newSet = { ...targetSet };
 
+        if (field === 'weight') newSet.weight = Math.max(0, num);
+        if (field === 'reps') newSet.reps = Math.max(0, Math.round(num));
+        if (field === 'restSeconds') newSet.restSeconds = Math.max(0, Math.round(num));
+
+        const newSets = targetExercise.sets.map((s, i) => i === setIdx ? newSet : s);
+        const updatedExercises = activeSession.exercises.map((ex, i) => i === exIdx ? { ...ex, sets: newSets } : ex);
         setActiveSession({ ...activeSession, exercises: updatedExercises });
       };
 
       // 세트 원버튼 삭제
       const handleDeleteSet = (exIdx, setIdx) => {
         if (!activeSession) return;
-        const updatedExercises = [...activeSession.exercises];
-        const currentSets = updatedExercises[exIdx].sets;
+        const targetExercise = activeSession.exercises[exIdx];
 
-        if (currentSets.length <= 1) {
+        if (targetExercise.sets.length <= 1) {
           window.appAlert("최소 1개 이상의 세트가 유지되어야 합니다.");
           return;
         }
 
-        currentSets.splice(setIdx, 1);
-        currentSets.forEach((s, idx) => { s.setNum = idx + 1; });
+        const newSets = targetExercise.sets
+          .filter((s, i) => i !== setIdx)
+          .map((s, idx) => ({ ...s, setNum: idx + 1 }));
+        const updatedExercises = activeSession.exercises.map((ex, i) => i === exIdx ? { ...ex, sets: newSets } : ex);
 
         setActiveSession({ ...activeSession, exercises: updatedExercises });
       };
@@ -1247,38 +1256,40 @@
       // 세트 순서를 드래그 앤 드롭으로 재배열 (세트 번호 재부여)
       const handleReorderSets = (exIdx, newSetsOrder) => {
         if (!activeSession) return;
-        const updatedExercises = [...activeSession.exercises];
-        updatedExercises[exIdx] = {
-          ...updatedExercises[exIdx],
-          sets: newSetsOrder.map((s, i) => ({ ...s, setNum: i + 1 }))
-        };
+        const updatedExercises = activeSession.exercises.map((ex, i) => i === exIdx ? {
+          ...ex,
+          sets: newSetsOrder.map((s, idx) => ({ ...s, setNum: idx + 1 }))
+        } : ex);
         setActiveSession({ ...activeSession, exercises: updatedExercises });
       };
 
       // 무게 운동 ↔ 맨몸(횟수 카운팅) 운동 모드 전환
       const handleToggleBodyweightMode = (exIdx) => {
         if (!activeSession) return;
-        const updatedExercises = [...activeSession.exercises];
-        updatedExercises[exIdx] = {
-          ...updatedExercises[exIdx],
-          isBodyweight: !updatedExercises[exIdx].isBodyweight
-        };
+        const updatedExercises = activeSession.exercises.map((ex, i) => i === exIdx ? {
+          ...ex,
+          isBodyweight: !ex.isBodyweight
+        } : ex);
         setActiveSession({ ...activeSession, exercises: updatedExercises });
       };
 
       const handleAddSet = (exIdx) => {
         if (!activeSession) return;
-        const updatedExercises = [...activeSession.exercises];
-        const sets = updatedExercises[exIdx].sets;
+        const targetExercise = activeSession.exercises[exIdx];
+        const sets = targetExercise.sets;
         const lastSet = sets[sets.length - 1] || { weight: 40, reps: 10, restSeconds: 60 };
 
-        sets.push({
-          setNum: sets.length + 1,
-          weight: lastSet.weight,
-          reps: lastSet.reps,
-          restSeconds: lastSet.restSeconds,
-          completed: false
-        });
+        const newSets = [
+          ...sets,
+          {
+            setNum: sets.length + 1,
+            weight: lastSet.weight,
+            reps: lastSet.reps,
+            restSeconds: lastSet.restSeconds,
+            completed: false
+          }
+        ];
+        const updatedExercises = activeSession.exercises.map((ex, i) => i === exIdx ? { ...ex, sets: newSets } : ex);
 
         setActiveSession({ ...activeSession, exercises: updatedExercises });
       };
